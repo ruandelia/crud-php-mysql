@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            max-width: 600px;
+            margin: 30px auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        table,
+        th,
+        td {
+            border: solid 1px #999;
+        }
+
+        th,
+        td {
+            padding: 8px;
+            text-align: left;
+        }
+
+        button {
+            margin-right: 5px;
+        }
+
+        #resultado {
+            margin-top: 10px;
+            font-weight: bold;
+        }
+
+        form>label {
+            display: block;
+            margin-top: 8px;
+        }
+
+        #btnCancelar {
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+    <main>
+        <h1>Cadastro de Usuário</h1>
+        <form id="userForm">
+            <input type="hidden" name="id" id="id">
+
+            <label for="nome">Nome</label>
+            <input type="text" name="nome" id="nome" required>
+            <br>
+
+            <label>Email</label>
+            <input type="email" name="email" id="email" required placeholder="Digite seu email" title="Informe seu endereço de email">
+            <br>
+            <br>
+
+            <button type="submit" id="btnSubmit">Inserir</button>
+            <button type="button" id="btnCancelar">Cancelar</button>
+        </form>
+
+        <div id="resultado"></div>
+        <section>
+            <h2>Lista de Usuários</h2>
+            <table id="userTable">
+                <thead>
+                    <th>ID</th>
+                    <th>Nome</th>
+                    <th>Email</th>
+                    <th>Ações</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+            <br>
+            <button id="btnSync">Sincronizar JSON com banco de dados</button>
+        </section>
+    </main>
+    <!-- Java Script -->
+    <script>
+        const apiUrl = "api/api-08.php"
+
+        const userForm = document.getElementById("userForm");
+        const inputId = document.getElementById("id");
+        const inputNome = document.getElementById("nome");
+        const inputEmail = document.getElementById("email");
+
+        const btnSubmit = document.getElementById("btnSubmit");
+        const btnCancelar = document.getElementById("btnCancelar");
+        const btnSync = document.getElementById("btnSync");
+
+        const resultado = document.getElementById("resultado");
+        const userTableBody = document.querySelector("#userTable tbody");
+
+        //Carregar lista de usuários e popula a tabela
+        function carregaUsuarios() {
+            fetch(apiUrl)
+                .then(res => res.json())
+                .then(data => {
+                    userTableBody.innerHTML = "";
+
+                    if (data.length === 0) {
+                        userTableBody.innerHTML = "<tr><td colspan='4'>Nenhum usuário cadastrado.</td></tr>";
+                        return;
+                    }
+
+                    data.forEach(user => {
+                        const tr = document.createElement("tr");
+
+                        tr.innerHTML = `
+                        <td>${user.id}</td>
+                        <td>${user.nome}</td>
+                        <td>${user.email}</td>
+                        <td>
+                            <button onclick="editaUsuario(${user.id}, '${user.nome}', '${user.email}')">Editar</button>
+                            <button onclick="excluiUsuario(${user.id})">Excluir</button>
+                        </td>
+                        `;
+                        userTableBody.appendChild(tr);
+                    })
+                })
+                .catch(err => {
+                    resultado.textContent = "Erro ao carregar usuários."
+                    console.error(err);
+                })
+        }
+
+        function editaUsuario(id, nome, email) {
+            inputId.value = id;
+            inputNome.value = nome;
+            inputEmail.value = email;
+
+            btnSubmit.textContent = "Atualizar";
+            btnCancelar.style.display = "inline";
+
+            resultado.textContent = "";
+        }
+
+        btnCancelar.addEventListener("click", () => {
+            limparFormulario();
+        });
+
+        function limparFormulario() {
+            inputId.value = "";
+            userForm.reset();
+            btnCancelar.style.display = "none";
+            btnSubmit.textContent = "Inserir";
+            resultado.textContent = "";
+        }
+
+        function excluiUsuario(id) {
+            if (!confirm("Confirma exclusão com ID " + id + "?")) return;
+
+            fetch(apiUrl, {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id })
+            })
+
+                .then(res => res.json())
+                .then(response => {
+                    if (response.status === "deletado") {
+                        resultado.textContent = `Usuário com ID ${id} excluído!`;
+                        carregaUsuarios();
+
+                        if (inputId.value === id) limparFormulario();
+                    } else {
+                        resultado.textContent = response.erro || "Erro ao excluir usuário!";
+                    }
+                })
+
+                .catch(err => {
+                    resultado.textContent = "Erro ao excluir usuário!";
+                    console.log(err);
+                })
+        }
+
+        userForm.addEventListener("submit", e => {
+            e.preventDefault();
+
+            const id = inputId.value;
+            const nome = inputNome.value;
+            const email = inputEmail.value;
+
+            if (!nome || !email) {
+                resultado.textContent = "Nome e Email são obrigatórios!";
+                return;
+            }
+
+            let method = "POST";
+            let bodyData = { nome, email };
+
+            if (id) {
+                method = "PUT";
+                bodyData.id = Number(id);
+            }
+
+            fetch(apiUrl, {
+                method,
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(bodyData)
+            })
+
+                .then(res => res.json())
+                .then(response => {
+                    if (response.status === "criado" || response.status === "atualizado") {
+                        resultado.textContent = `Usuário ${response.status}: ID ${response.data.id}`;
+                        limparFormulario();
+                        carregaUsuarios();
+                    } else {
+                        resultado.textContent = "ERRO: " + response.erro;
+                    }
+                })
+
+                .catch(err => {
+                    resultado.textContent = "Erro ao enviar dados!";
+                    console.log(err);
+                })
+        });
+
+        carregaUsuarios();
+
+        //Sincronização com banco de dados
+
+        const apiUrlSync = "api/api-08.php?action=sync";
+        const syncResult = document.getElementById("resultado");
+
+        btnSync.addEventListener("click", () => {
+            fetch(apiUrlSync)
+                .then(response => response.json())
+
+                .then(data => {
+                    syncResult.textContent = data.message || "Sincronização feita!"
+                })
+
+                .catch(err => {
+                    syncResult.textContent = "Erro na sincronização!";
+                    console.error(err);
+                })
+        });
+
+    </script>
+</body>
+
+</html>
