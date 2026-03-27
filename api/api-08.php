@@ -16,7 +16,7 @@ header("Access-Control-Headers: Content-Type");
 $method = $_SERVER['REQUEST_METHOD'];
 
 //Define o caminho do arquivo para obter os dados armazenados.
-$dataFile = "..//data/data.json";
+$dataFile = "../data/data.json";
 
 /*
 *Função para salvar os dados em JSON.
@@ -118,44 +118,42 @@ function getBDConnection()
 function sincronizarDataJsonParaMySQL()
 {
     $db = getBDConnection();
-
     $jsonFile = __DIR__ . "/../data/data.json";
 
     if (!file_exists($jsonFile)) {
         http_response_code(404);
-        echo json_encode([
-            'erro' => true,
-            'message' => "Arquivo data.json não encontrado!"
-        ]);
+        echo json_encode(['erro' => true, 'message' => "Arquivo data.json não encontrado!"]);
         exit;
     }
 
-    $jsonContent = file_get_contents($jsonFile);
-    $data = json_decode($jsonContent, true);
+    $data = json_decode(file_get_contents($jsonFile), true);
 
-    if (!$data) {
+    if (!is_array($data)) {
         http_response_code(400);
-        echo json_encode([
-            'erro' => true,
-            'message' => "ERRO ao decodificar o JSON!"
-        ]);
+        echo json_encode(['erro' => true, 'message' => "ERRO ao decodificar o JSON!"]);
         exit;
     }
 
-    $stmt = $db->prepare("
-        INSERT INTO tbUSUARIO (id, nome, email)
-        VALUES (?, ?, ?) 
-        ON DUPLICATE KEY UPDATE nome = VALUES(nome), email = VALUES(email)
-    "); // Adicionado o 'S' em VALUES
+    try {
+        // 1. Limpa a tabela para remover quem foi excluído no JSON
+        $db->exec("DELETE FROM tbUSUARIO");
 
-    foreach ($data as $user) {
-        $stmt->execute([$user['id'], $user['nome'], $user['email']]);
+        // 2. Prepara o comando de inserção
+        $stmt = $db->prepare("INSERT INTO tbUSUARIO (id, nome, email) VALUES (?, ?, ?)");
+
+        // 3. Reinsere todos os dados atuais do JSON
+        foreach ($data as $user) {
+            $stmt->execute([$user['id'], $user['nome'], $user['email']]);
+        }
+
+        echo json_encode([
+            'erro' => false,
+            'message' => "Sincronização concluída! O banco agora reflete exatamente o arquivo JSON."
+        ]);
+    } catch (PDOException $e) {
+        http_response_code(500);
+        echo json_encode(['erro' => true, 'message' => "Erro no banco: " . $e->getMessage()]);
     }
-
-    echo json_encode([
-        'erro' => false,
-        'message' => "Sincronização Concluída com sucesso!"
-    ]);
 }
 
 if (isset($_GET['action']) && $_GET['action'] === 'sync') {
@@ -165,15 +163,13 @@ if (isset($_GET['action']) && $_GET['action'] === 'sync') {
 
 switch ($method) {
     case 'GET':
-        //Para requisição 'GET', lê os dados do arquivo e retorna o JSON
         echo json_encode(readData());
         break;
+
     case 'POST':
-        //Para requisição 'POST', lê o corpo da requisição JSON e decodifica o array associativo
         $input = json_decode(file_get_contents('php://input'), true);
-        //Uso de uma função para validar os dados de entrada
         validarCamposObrigatorios($input, ['nome', 'email']);
-        //Lê os dados atuais do arquivo JSON
+        
         $data = readData();
         $novoId = count($data) > 0 ? end($data)['id'] + 1 : 1;
         $novoRegistro = [
@@ -182,80 +178,61 @@ switch ($method) {
             "email" => $input['email']
         ];
         $data[] = $novoRegistro;
-        //Salva o array atualizado no arquivo JSON
         saveData($data);
 
-        // Dentro do case 'POST'
-        $db = getBDConnection();
-        // Adicione o campo 'id' no comando e no execute
-        $stmt = $db->prepare("INSERT INTO tbUSUARIO (id, nome, email) VALUES (:id, :nome, :email)");
-        $stmt->execute([
-            'id'    => $novoId, // Agora o banco recebe o mesmo ID do JSON
-            'nome'  => $input['nome'],
-            'email' => $input['email']
-        ]);
-        /**
-         * Retorna uma resposta JSON informado que o dado foi criado junto com os dados já inseridos em JSON.
-         */
-        echo json_encode([
-            'erro' => false,
-            'status' => "criado",
-            'data' => $novoRegistro
-        ]);
+        // REMOVIDO: A parte que dava INSERT no banco de dados
+        
+        echo json_encode(['erro' => false, 'status' => "criado", 'data' => $novoRegistro]);
         break;
+
     case 'PUT':
         $input = json_decode(file_get_contents('php://input'), true);
+        // Validamos nome e email primeiro
         validarCamposObrigatorios($input, ['nome', 'email']);
-        $data = readData();
-        $atualizado = null;
+        
+        // Verificamos se o ID existe separadamente para dar uma mensagem clara
+        if (!isset($input['id']) || empty($input['id'])) {
+            http_response_code(400);
+            echo json_encode(['erro' => true, 'message' => "ID é necessário para atualizar."]);
+            exit;
+        }
 
-        $db = getBDConnection();
-        $stmt = $db->prepare("UPDATE tbUSUARIO SET nome = :nome, email = :email WHERE id = :id");
-        $stmt->execute(['nome' => $input['nome'], 'email' => $input['email'], 'id' => $input['id']]);
+        $data = readData();
+        $atualizado = false;
 
         foreach ($data as &$item) {
-            if ($item['id'] === $input['id']) {
-                $item = [
-                    "id" => $input['id'],
-                    "nome" => $input['nome'],
-                    "email" => $input['email']
-                ];
+            if ($item['id'] == $input['id']) { // Usamos == para evitar erro de tipo string vs int
+                $item['nome'] = $input['nome'];
+                $item['email'] = $input['email'];
                 $atualizado = true;
                 break;
             }
         }
+
         if ($atualizado) {
             saveData($data);
-            echo json_encode([
-                'erro' => false,
-                'status' => "atualizado",
-                'data' => $atualizado
-            ]);
+            echo json_encode(['erro' => false, 'status' => "atualizado", 'data' => $input]);
         } else {
-            echo json_encode([
-                'erro' => false,
-                'status' => "atualizado",
-                'data' => $item // Retorna o item que foi modificado dentro do loop
-            ]);
+            http_response_code(404);
+            echo json_encode(['erro' => true, 'message' => "Usuário não encontrado no arquivo."]);
         }
         break;
+
     case 'DELETE':
         $input = json_decode(file_get_contents('php://input'), true);
         $data = readData();
-        // Filtra os dados
+        
+        $dataOriginalCount = count($data);
         $data = array_filter($data, fn($item) => $item['id'] != $input['id']);
 
-        saveData(array_values($data));
-
-        $db = getBDConnection();
-        $stmt = $db->prepare("DELETE FROM tbUSUARIO WHERE id = :id");
-        $stmt->execute(['id' => $input['id']]);
-
-        echo json_encode([
-            'erro' => false,
-            'status' => "deletado",
-        ]);
-        break; // <--- FALTAVA ESTE BREAK
+        if (count($data) < $dataOriginalCount) {
+            saveData(array_values($data));
+            // REMOVIDO: A parte que dava DELETE no banco de dados
+            echo json_encode(['erro' => false, 'status' => "deletado"]);
+        } else {
+            echo json_encode(['erro' => true, 'message' => "ID não encontrado."]);
+        }
+        break;
 
     default:
         http_response_code(405);
